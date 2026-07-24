@@ -100,16 +100,17 @@ const FREE_KEY_URLS: Record<AIProvider, string> = {
 };
 
 const FREE_NOTICES: Record<AIProvider, string> = {
-  groq:   "🆓 <strong>100% free</strong> — no credit card needed. Sign up at console.groq.com, grab an API key, done.",
-  gemini: "⚠️ Free in some regions, but <strong>may require billing</strong>. If you hit payment errors, switch to Groq.",
+  groq:   "🆓 100% free — no credit card needed. Sign up at console.groq.com, grab an API key, done.",
+  gemini: "⚠️ Free in some regions, but may require billing. If you hit payment errors, switch to Groq.",
   openai: "💳 Requires a paid OpenAI account.",
-  "gemini-cli": "💻 Uses the locally installed <code>gemini</code> CLI tool. Supports <strong>live web search</strong>!",
+  "gemini-cli": "💻 Uses the locally installed gemini CLI tool. Supports live web search!",
   claude: "💳 Requires an Anthropic account. Get your API key at console.anthropic.com.",
-  "claude-cli": "💻 Uses the locally installed <code>claude</code> CLI. No API key needed — uses your existing CLI login.",
+  "claude-cli": "💻 Uses the locally installed claude CLI. No API key needed — uses your existing CLI login.",
 };
 
 export class MultiAIAssistantSettingsTab extends PluginSettingTab {
   plugin: MultiAIAssistantPlugin;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private modelDropdown: any;
   private noticeEl: HTMLElement;
 
@@ -121,7 +122,8 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Multi-AI Assistant Settings" });
+    
+    new Setting(containerEl).setName("Multi-AI Assistant Settings").setHeading();
 
     // ── Notice banner ─────────────────────────────────────────
     this.noticeEl = containerEl.createDiv("ra-settings-notice");
@@ -149,7 +151,7 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
       });
 
     // ── API Keys ──────────────────────────────────────────────
-    containerEl.createEl("h3", { text: "API Keys" });
+    new Setting(containerEl).setName("API Keys").setHeading();
 
     const keyProviders: { value: AIProvider; label: string }[] = [
       { value: "groq", label: "Groq" },
@@ -175,11 +177,15 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
 
     // CLI Info (No keys needed)
     const cliInfo = containerEl.createDiv("ra-settings-notice");
-    cliInfo.style.marginTop = "10px";
-    cliInfo.innerHTML = "💡 <strong>CLI Providers:</strong> Gemini CLI and Claude CLI use your local terminal login and do not require API keys here.";
+    cliInfo.setCssStyles({ marginTop: "10px" });
+    
+    cliInfo.empty();
+    cliInfo.createSpan({ text: "💡 " });
+    cliInfo.createEl("strong", { text: "CLI Providers:" });
+    cliInfo.createSpan({ text: " Gemini CLI and Claude CLI use your local terminal login and do not require API keys here." });
 
     // ── Model ─────────────────────────────────────────────────
-    const modelSetting = new Setting(containerEl)
+    new Setting(containerEl)
       .setName("Model")
       .addDropdown((drop) => {
         this.modelDropdown = drop;
@@ -198,7 +204,6 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
         slider
           .setLimits(10, 500, 10)
           .setValue(this.plugin.settings.maxNotesToIndex)
-          .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.maxNotesToIndex = value;
             await this.plugin.saveSettings();
@@ -206,17 +211,20 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
       );
 
     // ── Character picker ──────────────────────────────────────
-    containerEl.createEl("h3", { text: "Assistant Character" });
+    new Setting(containerEl).setName("Assistant Character").setHeading();
 
     const pickerGrid = containerEl.createDiv("ra-char-picker");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pluginDir = (this.plugin.manifest as any).dir as string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const adapter = this.app.vault.adapter as any;
 
     for (const char of CHARACTERS) {
       const isSelected = this.plugin.settings.assistantPhotoFilename === char.spriteFile;
       const cell = pickerGrid.createDiv("ra-char-cell" + (isSelected ? " ra-char-cell--selected" : ""));
 
-      const src = typeof adapter.getResourcePath === "function"
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+      const src = (adapter && typeof adapter.getResourcePath === "function")
         ? adapter.getResourcePath(`${pluginDir}/${char.spriteFile}`)
         : "";
       const img = cell.createEl("img", { cls: "ra-char-img" }) as HTMLImageElement;
@@ -239,7 +247,8 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
       .setDesc("Or upload your own (PNG, JPG, GIF).")
       .addButton((btn) => {
         btn.setButtonText("Upload photo").onClick(() => {
-          const input = document.createElement("input");
+          const doc = activeDocument || document;
+          const input = doc.createEl("input");
           input.type = "file";
           input.accept = "image/png,image/jpeg,image/gif,image/webp";
           input.onchange = async () => {
@@ -249,6 +258,7 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
               const ext = file.name.split(".").pop() ?? "jpg";
               const filename = `assistant-photo.${ext}`;
               const buffer = await file.arrayBuffer();
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
               await adapter.writeBinary(`${pluginDir}/${filename}`, buffer);
               this.plugin.settings.assistantPhotoFilename = filename;
               await this.plugin.saveSettings();
@@ -288,7 +298,7 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
         text.inputEl.rows = 8;
-        text.inputEl.style.width = "100%";
+        text.inputEl.setCssStyles({ width: "100%" });
       });
 
     // ── Quiz Settings ─────────────────────────────────────────
@@ -299,7 +309,6 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
         slider
           .setLimits(1, 20, 1)
           .setValue(this.plugin.settings.quizCount)
-          .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.quizCount = value;
             await this.plugin.saveSettings();
@@ -356,7 +365,6 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
         slider
           .setLimits(1, 30, 1)
           .setValue(this.plugin.settings.flashcardCount)
-          .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.flashcardCount = value;
             await this.plugin.saveSettings();
@@ -393,16 +401,28 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
   }
 
   private updateNotice() {
-    this.noticeEl.innerHTML = FREE_NOTICES[this.plugin.settings.provider]
-      + (this.plugin.settings.provider !== "gemini-cli" ? ` Get your key at <a href="${FREE_KEY_URLS[this.plugin.settings.provider]}">${FREE_KEY_URLS[this.plugin.settings.provider]}</a>` : "");
+    this.noticeEl.empty();
+    const provider = this.plugin.settings.provider;
+    this.noticeEl.createSpan({ text: FREE_NOTICES[provider] });
+
+    if (provider !== "gemini-cli" && provider !== "claude-cli") {
+      const url = FREE_KEY_URLS[provider];
+      if (url) {
+        this.noticeEl.createSpan({ text: " Get your key at " });
+        this.noticeEl.createEl("a", { text: url, href: url });
+      }
+    }
   }
 
   private updateModelDropdown() {
     if (!this.modelDropdown) return;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     this.modelDropdown.selectEl.empty();
     MODELS[this.plugin.settings.provider].forEach(({ value, label }) => {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
       this.modelDropdown.addOption(value, label);
     });
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
     this.modelDropdown.setValue(this.plugin.settings.model);
   }
 }

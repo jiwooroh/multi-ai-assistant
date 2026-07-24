@@ -1,7 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
-import builtins from "builtin-modules";
-import { copyFileSync } from "fs";
+import { builtinModules } from "module";
 
 const prod = process.argv[2] === "production";
 
@@ -22,7 +21,7 @@ const context = await esbuild.context({
     "@lezer/common",
     "@lezer/highlight",
     "@lezer/lr",
-    ...builtins,
+    ...builtinModules,
   ],
   format: "cjs",
   target: "es2018",
@@ -42,12 +41,6 @@ const context = await esbuild.context({
     },
   ],
 });
-
-// Always keep the PDF.js worker file in sync
-copyFileSync(
-  "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.js",
-  "pdf.worker.min.js"
-);
 
 if (prod) {
   await context.rebuild();

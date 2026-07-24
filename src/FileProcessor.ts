@@ -1,4 +1,4 @@
-import { App, TFile, Notice } from "obsidian";
+import { App, TFile } from "obsidian";
 import type { IndexedDocument } from "./AIService";
 
 export class FileProcessor {
@@ -90,15 +90,17 @@ export class FileProcessor {
 
   private async parsePDFArrayBuffer(arrayBuffer: ArrayBuffer): Promise<string> {
     // pdfjs-dist v3 legacy CJS build
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-var-requires: Use legacy CommonJS build for PDF.js inside Obsidian
     const pdfjs = require("pdfjs-dist/legacy/build/pdf.js");
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const pdfjsLib = pdfjs.default ?? pdfjs;
 
-    // On desktop the worker URL is pre-resolved; on mobile fall back to empty string
-    // which makes pdfjs run in fake-worker (main-thread) mode.
-    const workerSrc = (window as any).__ra_pdfWorkerSrc ?? "";
-    pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+    // Run PDF.js in fake-worker (main-thread) mode to comply with Obsidian security policy
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "";
 
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
     const loadingTask = pdfjsLib.getDocument({
       data: new Uint8Array(arrayBuffer),
       useWorkerFetch: false,
@@ -106,13 +108,19 @@ export class FileProcessor {
       useSystemFonts: true,
     });
 
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const pdf = await loadingTask.promise;
     const pageTexts: string[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     for (let i = 1; i <= pdf.numPages; i++) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
       const page = await pdf.getPage(i);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
       const content = await page.getTextContent();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
       const pageText = (content.items as any[])
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access
         .map((item) => item.str ?? "")
         .join(" ");
       pageTexts.push(pageText);

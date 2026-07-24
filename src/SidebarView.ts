@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, TFile, TFolder, Notice, Setting, Platform } from "obsidian";
+import { ItemView, WorkspaceLeaf, TFile, TFolder, Notice, Setting, Platform, MarkdownRenderer, setIcon } from "obsidian";
 import type MultiAIAssistantPlugin from "../main";
 import type { IndexedDocument, QuizQuestion, Flashcard } from "./AIService";
 import { FileProcessor } from "./FileProcessor";
@@ -84,7 +84,7 @@ export class SidebarView extends ItemView {
   public async searchExternal(query: string) {
     this.setMode("chat");
     this.chatInput.value = query;
-    this.chatInput.style.height = Math.min(this.chatInput.scrollHeight, 120) + "px";
+    this.chatInput.setCssStyles({ height: Math.min(this.chatInput.scrollHeight, 120) + "px" });
     await this.submitChat();
   }
 
@@ -126,17 +126,17 @@ export class SidebarView extends ItemView {
     const right = header.createDiv("ra-header-right");
     if (this.mode !== "home") {
       const homeBtn = right.createEl("button", { cls: "ra-icon-btn", attr: { title: "Home" } });
-      homeBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`;
+      setIcon(homeBtn, "home");
       homeBtn.addEventListener("click", () => this.setMode("home"));
     }
 
     // Character picker button + dropdown
     const charPickerWrap = right.createDiv("ra-char-picker-wrap");
     const charBtn = charPickerWrap.createEl("button", { cls: "ra-icon-btn ra-char-pick-btn", attr: { title: "Switch Character" } });
-    charBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`;
+    setIcon(charBtn, "users");
 
     const dropdown = charPickerWrap.createDiv("ra-char-pick-dropdown");
-    dropdown.style.display = "none";
+    dropdown.setCssStyles({ display: "none" });
 
     const currentFile = this.plugin.settings.assistantPhotoFilename || "sprite-pixel.png";
     for (const c of CHARACTERS) {
@@ -148,7 +148,7 @@ export class SidebarView extends ItemView {
       text.createEl("span", { text: c.englishTag, cls: "ra-char-pick-tag" });
       item.addEventListener("mousedown", (e) => {
         e.preventDefault();
-        dropdown.style.display = "none";
+        dropdown.setCssStyles({ display: "none" });
         this.switchCharacter(c);
       });
     }
@@ -156,16 +156,16 @@ export class SidebarView extends ItemView {
     charBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       const isOpen = dropdown.style.display !== "none";
-      dropdown.style.display = isOpen ? "none" : "block";
+      dropdown.setCssStyles({ display: isOpen ? "none" : "block" });
     });
 
-    document.addEventListener("click", () => { dropdown.style.display = "none"; });
+    document.addEventListener("click", () => { dropdown.setCssStyles({ display: "none" }); });
 
     const kbBtn = right.createEl("button", { cls: "ra-icon-btn", attr: { title: "Toggle Knowledge Base" } });
-    kbBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>`;
+    setIcon(kbBtn, "library");
     kbBtn.addEventListener("click", () => {
       this.kbOpen = !this.kbOpen;
-      this.kbBody.style.display = this.kbOpen ? "block" : "none";
+      this.kbBody.setCssStyles({ display: this.kbOpen ? "block" : "none" });
     });
   }
 
@@ -175,22 +175,22 @@ export class SidebarView extends ItemView {
 
   private buildKBPanel(root: HTMLElement) {
     this.kbBody = root.createDiv("ra-kb-panel");
-    this.kbBody.style.display = this.kbOpen ? "block" : "none";
+    this.kbBody.setCssStyles({ display: this.kbOpen ? "block" : "none" });
 
     // Add folding header
     const kbHeader = this.kbBody.createDiv("ra-kb-header");
     const kbToggle = kbHeader.createDiv("ra-kb-toggle");
-    kbToggle.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+    setIcon(kbToggle, "chevron-down");
     kbHeader.createEl("span", { text: "Knowledge Base", cls: "ra-kb-title" });
 
     const kbContent = this.kbBody.createDiv("ra-kb-content");
-    kbContent.style.display = this.kbContentOpen ? "block" : "none";
-    kbToggle.style.transform = this.kbContentOpen ? "rotate(0deg)" : "rotate(-90deg)";
+    kbContent.setCssStyles({ display: this.kbContentOpen ? "block" : "none" });
+    kbToggle.setCssStyles({ transform: this.kbContentOpen ? "rotate(0deg)" : "rotate(-90deg)" });
 
     kbHeader.addEventListener("click", () => {
       this.kbContentOpen = !this.kbContentOpen;
-      kbContent.style.display = this.kbContentOpen ? "block" : "none";
-      kbToggle.style.transform = this.kbContentOpen ? "rotate(0deg)" : "rotate(-90deg)";
+      kbContent.setCssStyles({ display: this.kbContentOpen ? "block" : "none" });
+      kbToggle.setCssStyles({ transform: this.kbContentOpen ? "rotate(0deg)" : "rotate(-90deg)" });
     });
 
     // Provider & Model Selector
@@ -252,7 +252,7 @@ export class SidebarView extends ItemView {
       attr: { placeholder: "Add more notes or folders…", type: "text" },
     }) as HTMLInputElement;
     this.dropdownEl = searchWrap.createDiv("ra-dropdown");
-    this.dropdownEl.style.display = "none";
+    this.dropdownEl.setCssStyles({ display: "none" });
 
     this.searchInput.addEventListener("input", () => this.onSearchInput());
     this.searchInput.addEventListener("focus", () => this.onSearchInput());
@@ -272,7 +272,7 @@ export class SidebarView extends ItemView {
     const uploadArea = kbContent.createDiv("ra-upload-area");
     uploadArea.createEl("div", { text: "Drop files or click to upload (.md · .pdf · images)", cls: "ra-upload-label" });
     const fileInput = uploadArea.createEl("input") as HTMLInputElement;
-    fileInput.type = "file"; fileInput.accept = ".md,.txt,.pdf,.png,.jpg,.jpeg,.webp,.gif"; fileInput.multiple = true; fileInput.style.display = "none";
+    fileInput.type = "file"; fileInput.accept = ".md,.txt,.pdf,.png,.jpg,.jpeg,.webp,.gif"; fileInput.multiple = true; fileInput.setCssStyles({ display: "none" });
     uploadArea.addEventListener("click", () => fileInput.click());
     uploadArea.addEventListener("dragover", (e) => { e.preventDefault(); uploadArea.addClass("ra-drag-over"); });
     uploadArea.addEventListener("dragleave", () => uploadArea.removeClass("ra-drag-over"));
@@ -366,15 +366,15 @@ export class SidebarView extends ItemView {
       attr: { placeholder: `${char.name}에게 물어보기…`, rows: "1" },
     }) as HTMLTextAreaElement;
     this.chatInput.addEventListener("input", () => {
-      this.chatInput.style.height = "auto";
-      this.chatInput.style.height = Math.min(this.chatInput.scrollHeight, 120) + "px";
+      this.chatInput.setCssStyles({ height: "auto" });
+      this.chatInput.setCssStyles({ height: Math.min(this.chatInput.scrollHeight, 120) + "px" });
     });
     this.chatInput.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.submitChat(); }
     });
     this.sendBtn = bar.createEl("button", { cls: "ra-send-btn" });
-    this.sendBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>`;
+    setIcon(this.sendBtn, "send");
     this.sendBtn.addEventListener("click", () => this.submitChat());
   }
 
@@ -383,14 +383,14 @@ export class SidebarView extends ItemView {
     if (!q) return;
     this.appendUserMsg(q);
     this.chatInput.value = "";
-    this.chatInput.style.height = "auto";
+    this.chatInput.setCssStyles({ height: "auto" });
     this.sendBtn.disabled = true;
 
     // Create a thinking/placeholder bubble
     const thinkingRow = this.appendCatMsg("...", true);
     const bubble = thinkingRow.querySelector(".ra-bubble") as HTMLElement;
     const actions = thinkingRow.querySelector(".ra-msg-actions") as HTMLElement;
-    if (actions) actions.style.display = "none";
+    if (actions) actions.setCssStyles({ display: "none" });
 
     let fullAnswer = "";
     try {
@@ -402,14 +402,18 @@ export class SidebarView extends ItemView {
           bubble.empty();
         }
         fullAnswer += chunk;
-        bubble.innerHTML = this.renderMarkdown(fullAnswer);
+        bubble.empty();
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+        void MarkdownRenderer.render(this.plugin.app, fullAnswer, bubble, "", this);
         this.chatEl.scrollTo({ top: this.chatEl.scrollHeight, behavior: "auto" });
       });
 
       // Finalize
-      bubble.innerHTML = this.renderMarkdown(answer);
+      bubble.empty();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      void MarkdownRenderer.render(this.plugin.app, answer, bubble, "", this);
       if (actions) {
-        actions.style.display = "flex";
+        actions.setCssStyles({ display: "flex" });
         // Re-bind actions with the full text
         this.refreshMsgActions(thinkingRow, answer);
       }
@@ -428,7 +432,7 @@ export class SidebarView extends ItemView {
     actions.empty();
 
     const copyBtn = actions.createEl("button", { cls: "ra-icon-btn", attr: { title: "Copy to clipboard" } });
-    copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+    setIcon(copyBtn, "copy");
     copyBtn.addEventListener("click", () => {
       navigator.clipboard.writeText(text);
       new Notice("Copied to clipboard");
@@ -483,7 +487,7 @@ export class SidebarView extends ItemView {
     progWrap.createEl("span", { text: `Question ${progress}`, cls: "ra-progress-label" });
     progWrap.createEl("span", { text: `Score: ${this.quizScore}`, cls: "ra-progress-score" });
     const bar = progWrap.createDiv("ra-progress-bar");
-    bar.createDiv("ra-progress-fill").style.width = `${(this.quizIndex / this.quizQuestions.length) * 100}%`;
+    bar.createDiv("ra-progress-fill").setCssStyles({ width: `${(this.quizIndex / this.quizQuestions.length) * 100}%` });
 
     // Question bubble
     const qBubble = page.createDiv("ra-quiz-question");
@@ -523,7 +527,7 @@ export class SidebarView extends ItemView {
     }
 
     const feedbackEl = page.createDiv("ra-quiz-feedback");
-    feedbackEl.style.display = "none";
+    feedbackEl.setCssStyles({ display: "none" });
   }
 
   private async submitQuizAnswer(userAns: string) {
@@ -538,7 +542,7 @@ export class SidebarView extends ItemView {
     const feedbackEl = root.querySelector(".ra-quiz-feedback") as HTMLElement;
     if (!feedbackEl) return;
 
-    feedbackEl.style.display = "block";
+    feedbackEl.setCssStyles({ display: "block" });
 
     const isMCQ = q.options && q.options.length > 0;
 
@@ -547,7 +551,10 @@ export class SidebarView extends ItemView {
       const correct = userAns.trim().toLowerCase() === q.answer.trim().toLowerCase();
       if (correct) this.quizScore++;
       feedbackEl.addClass(correct ? "ra-quiz-feedback--correct" : "ra-quiz-feedback--wrong");
-      feedbackEl.innerHTML = `<strong>${correct ? "✓ Correct!" : "✗ Not quite"}</strong><br><em>Answer: ${q.answer}</em>`;
+      feedbackEl.empty();
+      feedbackEl.createEl("strong", { text: correct ? "✓ Correct!" : "✗ Not quite" });
+      feedbackEl.createEl("br");
+      feedbackEl.createEl("em", { text: `Answer: ${q.answer}` });
 
       const page = root.querySelector(".ra-quiz-page") as HTMLElement;
       const nextBtn = page.createEl("button", {
@@ -561,7 +568,12 @@ export class SidebarView extends ItemView {
         const result = await this.plugin.aiService.evaluateAnswer(q.question, q.answer, userAns);
         feedbackEl.empty();
         feedbackEl.addClass(result.correct ? "ra-quiz-feedback--correct" : "ra-quiz-feedback--wrong");
-        feedbackEl.innerHTML = `<strong>${result.correct ? "✓ Correct!" : "✗ Not quite"}</strong><br>${result.feedback}<br><em>Model answer: ${q.answer}</em>`;
+        feedbackEl.empty();
+        feedbackEl.createEl("strong", { text: result.correct ? "✓ Correct!" : "✗ Not quite" });
+        feedbackEl.createEl("br");
+        feedbackEl.createSpan({ text: result.feedback });
+        feedbackEl.createEl("br");
+        feedbackEl.createEl("em", { text: `Model answer: ${q.answer}` });
         if (result.correct) this.quizScore++;
 
         const page = root.querySelector(".ra-quiz-page") as HTMLElement;
@@ -736,7 +748,7 @@ export class SidebarView extends ItemView {
     progWrap.createEl("span", { text: `${this.cardIndex + 1} / ${this.flashcards.length}`, cls: "ra-progress-label" });
     progWrap.createEl("span", { text: `✓ ${known}`, cls: "ra-progress-score" });
     const bar = progWrap.createDiv("ra-progress-bar");
-    bar.createDiv("ra-progress-fill").style.width = `${(this.cardIndex / this.flashcards.length) * 100}%`;
+    bar.createDiv("ra-progress-fill").setCssStyles({ width: `${(this.cardIndex / this.flashcards.length) * 100}%` });
 
     // Card
     const cardEl = page.createDiv("ra-flashcard" + (this.cardFlipped ? " ra-flashcard--flipped" : ""));
@@ -830,25 +842,25 @@ export class SidebarView extends ItemView {
 
   private buildNotebookLMPage(root: HTMLElement) {
     const page = root.createDiv("ra-page ra-notebooklm-page");
-    page.style.height = "100%";
-    page.style.display = "flex";
-    page.style.flexDirection = "column";
-    page.style.padding = "0";
+    page.setCssStyles({ height: "100%" });
+    page.setCssStyles({ display: "flex" });
+    page.setCssStyles({ flexDirection: "column" });
+    page.setCssStyles({ padding: "0" });
 
     if (Platform.isDesktop) {
       // Desktop: embed via iframe (works in Electron/Obsidian desktop)
-      const iframe = document.createElement("iframe");
+      const iframe = activeDocument.createEl("iframe");
       iframe.setAttribute("src", "https://notebooklm.google.com/");
       iframe.setAttribute("allow", "clipboard-read; clipboard-write");
-      iframe.style.flex = "1";
-      iframe.style.width = "100%";
-      iframe.style.height = "100%";
-      iframe.style.border = "none";
+      iframe.setCssStyles({ flex: "1" });
+      iframe.setCssStyles({ width: "100%" });
+      iframe.setCssStyles({ height: "100%" });
+      iframe.setCssStyles({ border: "none" });
       page.appendChild(iframe);
     } else {
       // Mobile/iPad: can't embed external sites, provide open-in-browser button
       const wrap = page.createDiv("ra-notebooklm-mobile");
-      wrap.style.cssText = "display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:12px;padding:24px;text-align:center;";
+      wrap.setCssStyles({ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: "1", gap: "12px", padding: "24px", textAlign: "center" });
       wrap.createEl("div", { text: "📓", attr: { style: "font-size:48px;" } });
       wrap.createEl("div", { text: "NotebookLM", attr: { style: "font-size:20px;font-weight:600;" } });
       wrap.createEl("div", { text: "NotebookLM cannot be embedded on mobile. Tap below to open it in your browser.", cls: "ra-home-label" });
@@ -894,14 +906,16 @@ export class SidebarView extends ItemView {
     const bubble = col.createDiv("ra-bubble ra-bubble--cat");
     if (isThinking) {
       bubble.addClass("ra-bubble--thinking");
-      bubble.innerHTML = `<span class="ra-dot"></span><span class="ra-dot"></span><span class="ra-dot"></span>`;
+      bubble.empty(); bubble.createSpan({ cls: "ra-dot" }); bubble.createSpan({ cls: "ra-dot" }); bubble.createSpan({ cls: "ra-dot" });
       col.createDiv("ra-msg-actions"); // placeholder; populated by refreshMsgActions after streaming
     } else {
-      bubble.innerHTML = this.renderMarkdown(text);
+      bubble.empty();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      void MarkdownRenderer.render(this.plugin.app, text, bubble, "", this);
       const actions = col.createDiv("ra-msg-actions");
       
       const copyBtn = actions.createEl("button", { cls: "ra-icon-btn", attr: { title: "Copy to clipboard" } });
-      copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+      setIcon(copyBtn, "copy");
       copyBtn.addEventListener("click", () => {
         navigator.clipboard.writeText(text);
         new Notice("Copied to clipboard");
@@ -916,16 +930,7 @@ export class SidebarView extends ItemView {
     return row;
   }
 
-  private renderMarkdown(text: string): string {
-    return text
-      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-      .replace(/\*(.*?)\*/g, "<em>$1</em>")
-      .replace(/`(.*?)`/g, "<code>$1</code>")
-      .replace(/^#{1,3} (.+)$/gm, "<strong>$1</strong>")
-      .replace(/^[-•] (.+)$/gm, "• $1")
-      .replace(/\n\n/g, "</p><p>")
-      .replace(/\n/g, "<br>");
-  }
+
 
   private friendlyError(e: unknown): string {
     const msg = (e as Error).message ?? String(e);
@@ -970,14 +975,14 @@ export class SidebarView extends ItemView {
     const form = container.createDiv("ra-save-form");
     const sw = form.createDiv("ra-search-wrap");
     const inp = sw.createEl("input", { cls: "ra-save-input", attr: { placeholder: "Search note to append to…", type: "text" } }) as HTMLInputElement;
-    const dd = sw.createDiv("ra-dropdown"); dd.style.display = "none";
+    const dd = sw.createDiv("ra-dropdown"); dd.setCssStyles({ display: "none" });
     const cancel = form.createEl("button", { text: "Cancel", cls: "ra-action-btn" });
     cancel.addEventListener("click", () => form.remove());
     const search = () => {
       const q = inp.value.trim().toLowerCase();
       const files = this.plugin.app.vault.getMarkdownFiles().filter(f => !q || f.path.toLowerCase().includes(q) || f.basename.toLowerCase().includes(q)).slice(0, 8);
       dd.empty();
-      if (!files.length) { dd.style.display = "none"; return; }
+      if (!files.length) { dd.setCssStyles({ display: "none" }); return; }
       files.forEach(file => {
         const item = dd.createDiv("ra-dropdown-item");
         item.createDiv("ra-dropdown-item-top").createEl("span", { text: "📄 " + file.basename, cls: "ra-dropdown-name" });
@@ -990,7 +995,7 @@ export class SidebarView extends ItemView {
           } catch (err) { new Notice("Failed: " + (err as Error).message); }
         });
       });
-      dd.style.display = "block";
+      dd.setCssStyles({ display: "block" });
     };
     inp.addEventListener("input", search); 
     inp.addEventListener("focus", search); 
@@ -1092,8 +1097,8 @@ export class SidebarView extends ItemView {
     (this.dropdownEl.querySelectorAll(".ra-dropdown-item")[i] as HTMLElement)?.addClass("ra-dropdown-item--focused");
   }
 
-  private showDropdown() { this.dropdownEl.style.display = "block"; this.dropdownVisible = true; }
-  private hideDropdown() { this.dropdownEl.style.display = "none"; this.dropdownVisible = false; this.focusedIndex = -1; }
+  private showDropdown() { this.dropdownEl.setCssStyles({ display: "block" }); this.dropdownVisible = true; }
+  private hideDropdown() { this.dropdownEl.setCssStyles({ display: "none" }); this.dropdownVisible = false; this.focusedIndex = -1; }
 
   private async selectResult(result: DropdownResult) {
     this.hideDropdown(); this.searchInput.value = "";

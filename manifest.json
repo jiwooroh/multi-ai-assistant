@@ -2,7 +2,7 @@
   "id": "multi-ai-assistant",
   "name": "Multi-AI Assistant",
   "version": "1.0.0",
-  "minAppVersion": "0.15.0",
+  "minAppVersion": "1.4.0",
   "description": "Index your notes and uploaded files, then ask Gemini, Groq, or OpenAI. Supports Gemini CLI.",
   "author": "Lucy Roh",
   "authorUrl": "https://github.com/lucytheboss",
