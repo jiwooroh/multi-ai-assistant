@@ -11,10 +11,11 @@
 }
 
 /* Global shadow reset */
-.ra-root *, 
+.ra-root .ra-root,
+.ra-root *,
 .ra-dropdown,
 .ra-floating-search-btn {
-  box-shadow: none !important;
+  box-shadow: none;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -117,6 +118,16 @@
   justify-content: center;
   color: var(--text-muted);
   transition: transform 0.2s ease;
+  transform: rotate(0deg);
+}
+
+.ra-kb-toggle--collapsed {
+  transform: rotate(-90deg);
+}
+
+.ra-kb-toggle .svg-icon {
+  width: 10px;
+  height: 10px;
 }
 
 .ra-kb-title {
@@ -521,6 +532,7 @@
 
 .ra-input {
   flex: 1;
+  height: var(--ra-input-height, auto);
   resize: none;
   font-size: 13px;
   font-family: inherit;
@@ -794,7 +806,13 @@
   border-radius: 2px;
   overflow: hidden;
 }
-.ra-progress-fill { height: 100%; background: var(--interactive-accent); border-radius: 2px; transition: width 0.3s; }
+.ra-progress-fill {
+  height: 100%;
+  width: var(--ra-progress-fill, 0%);
+  background: var(--interactive-accent);
+  border-radius: 2px;
+  transition: width 0.3s;
+}
 
 /* ═══════════════════════════════════════════════════════
    Quiz
@@ -1094,11 +1112,11 @@
   margin-top: 30px;
 }
 
-.ra-quiz-page .setting-item,
-.ra-flash-page .setting-item {
-  border: none !important;
-  background: none !important;
-  padding: 8px 0 !important;
+.ra-root .ra-quiz-page .setting-item,
+.ra-root .ra-flash-page .setting-item {
+  border: none;
+  background: none;
+  padding: 8px 0;
 }
 
 .ra-quiz-page .setting-item-name,
@@ -1114,6 +1132,8 @@
 
 .ra-floating-search-btn {
   position: absolute;
+  left: var(--ra-float-left, 0);
+  top: var(--ra-float-top, 0);
   z-index: 10000;
   display: none;
   align-items: center;
@@ -1140,4 +1160,102 @@
 
 .ra-floating-search-btn svg {
   display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.ra-floating-search-btn.is-visible {
+  display: flex;
+}
+
+/* ═══════════════════════════════════════════════════════
+   Settings pane extras
+═══════════════════════════════════════════════════════ */
+.ra-settings-notice--spaced {
+  margin-top: 10px;
+}
+
+.ra-settings-textarea {
+  width: 100%;
+}
+
+/* ═══════════════════════════════════════════════════════
+   NotebookLM page
+═══════════════════════════════════════════════════════ */
+.ra-notebooklm-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+}
+
+.ra-notebooklm-frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.ra-notebooklm-mobile {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.ra-notebooklm-emoji {
+  font-size: 48px;
+}
+
+.ra-notebooklm-title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* ═══════════════════════════════════════════════════════
+   Rendered markdown inside chat bubbles
+═══════════════════════════════════════════════════════ */
+.ra-markdown > :first-child {
+  margin-top: 0;
+}
+
+.ra-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.ra-markdown p {
+  margin: 0 0 0.6em;
+}
+
+.ra-markdown ul,
+.ra-markdown ol {
+  margin: 0 0 0.6em;
+  padding-left: 1.3em;
+}
+
+.ra-markdown h1,
+.ra-markdown h2,
+.ra-markdown h3,
+.ra-markdown h4 {
+  margin: 0.4em 0 0.3em;
+  font-size: 1.05em;
+  line-height: 1.35;
+}
+
+.ra-markdown pre {
+  margin: 0 0 0.6em;
+  padding: 8px 10px;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+/* ═══════════════════════════════════════════════════════
+   Utilities — keep last so it wins over layout rules above
+═══════════════════════════════════════════════════════ */
+.ra-hidden {
+  display: none;
 }

@@ -1,6 +1,40 @@
 import { App, TFile } from "obsidian";
 import type { IndexedDocument } from "./AIService";
 
+/** URL of the PDF.js worker shipped in the plugin folder. Resolved once at plugin load. */
+let pdfWorkerSrc = "";
+
+export function setPdfWorkerSrc(src: string) {
+  pdfWorkerSrc = src;
+}
+
+/**
+ * Minimal structural types for the parts of pdfjs-dist we actually touch.
+ * The library ships its own types, but they pull in DOM/canvas declarations we
+ * do not need, so the surface is narrowed here instead.
+ */
+interface PdfTextItem {
+  str?: string;
+}
+interface PdfPage {
+  getTextContent(): Promise<{ items: unknown[] }>;
+}
+interface PdfDocument {
+  numPages: number;
+  getPage(pageNumber: number): Promise<PdfPage>;
+}
+interface PdfJsLib {
+  GlobalWorkerOptions: { workerSrc: string };
+  getDocument(src: {
+    data: Uint8Array;
+    useWorkerFetch?: boolean;
+    isEvalSupported?: boolean;
+    useSystemFonts?: boolean;
+  }): { promise: Promise<PdfDocument> };
+}
+
+const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif"];
+
 export class FileProcessor {
   private app: App;
 
@@ -15,7 +49,7 @@ export class FileProcessor {
 
     for (const file of toIndex) {
       try {
-        const content = await this.app.vault.read(file);
+        const content = await this.app.vault.cachedRead(file);
         if (content.trim().length > 0) {
           documents.push({
             name: file.path,
@@ -24,7 +58,7 @@ export class FileProcessor {
           });
         }
       } catch (e) {
-        console.warn(`Research Assistant: could not read ${file.path}`, e);
+        console.warn(`Multi-AI Assistant: could not read ${file.path}`, e);
       }
     }
 
@@ -33,29 +67,32 @@ export class FileProcessor {
 
   async processUploadedFile(file: File): Promise<IndexedDocument> {
     const ext = file.name.split(".").pop()?.toLowerCase();
-    const imageExtensions = ["png", "jpg", "jpeg", "webp", "gif"];
-    
+
     if (ext === "pdf") {
       const arrayBuffer = await file.arrayBuffer();
       const text = await this.parsePDFArrayBuffer(arrayBuffer);
       return { name: file.name, content: this.truncate(text, 50000), source: "upload" };
-    } else if (ext === "md" || ext === "txt") {
+    }
+
+    if (ext === "md" || ext === "txt") {
       const text = await file.text();
       return { name: file.name, content: this.truncate(text, 50000), source: "upload" };
-    } else if (ext && imageExtensions.includes(ext)) {
-      const arrayBuffer = await file.arrayBuffer();
-      const base64 = this.arrayBufferToBase64(arrayBuffer);
-      const mimeType = `image/${ext === "jpg" ? "jpeg" : ext}`;
-      return { 
-        name: file.name, 
-        content: `[Image File: ${file.name}]`, 
-        source: "upload",
-        imageData: base64,
-        mimeType: mimeType
-      };
-    } else {
-      throw new Error(`Unsupported file type: .${ext}. Supported: .md, .txt, .pdf, .png, .jpg, .jpeg, .webp, .gif`);
     }
+
+    if (ext && IMAGE_EXTENSIONS.includes(ext)) {
+      const arrayBuffer = await file.arrayBuffer();
+      return {
+        name: file.name,
+        content: `[Image File: ${file.name}]`,
+        source: "upload",
+        imageData: this.arrayBufferToBase64(arrayBuffer),
+        mimeType: `image/${ext === "jpg" ? "jpeg" : ext}`,
+      };
+    }
+
+    throw new Error(
+      `Unsupported file type: .${ext ?? "?"}. Supported: .md, .txt, .pdf, .png, .jpg, .jpeg, .webp, .gif`
+    );
   }
 
   async readVaultPDF(file: TFile): Promise<IndexedDocument> {
@@ -66,41 +103,32 @@ export class FileProcessor {
 
   async readVaultImage(file: TFile): Promise<IndexedDocument> {
     const arrayBuffer = await this.app.vault.readBinary(file);
-    const base64 = this.arrayBufferToBase64(arrayBuffer);
     const ext = file.extension.toLowerCase();
-    const mimeType = `image/${ext === "jpg" ? "jpeg" : ext}`;
-    return { 
-      name: file.path, 
-      content: `[Vault Image: ${file.path}]`, 
+    return {
+      name: file.path,
+      content: `[Vault Image: ${file.path}]`,
       source: "vault",
-      imageData: base64,
-      mimeType: mimeType
+      imageData: this.arrayBufferToBase64(arrayBuffer),
+      mimeType: `image/${ext === "jpg" ? "jpeg" : ext}`,
     };
   }
 
   private arrayBufferToBase64(buffer: ArrayBuffer): string {
     let binary = "";
     const bytes = new Uint8Array(buffer);
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
+    for (let i = 0; i < bytes.byteLength; i++) {
       binary += String.fromCharCode(bytes[i]);
     }
     return window.btoa(binary);
   }
 
   private async parsePDFArrayBuffer(arrayBuffer: ArrayBuffer): Promise<string> {
-    // pdfjs-dist v3 legacy CJS build
-    // eslint-disable-next-line @typescript-eslint/no-var-requires: Use legacy CommonJS build for PDF.js inside Obsidian
-    const pdfjs = require("pdfjs-dist/legacy/build/pdf.js");
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-    const pdfjsLib = pdfjs.default ?? pdfjs;
+    // Loaded lazily so the ~1 MB PDF.js bundle is only evaluated when a PDF is opened.
+    const mod = await import("pdfjs-dist/legacy/build/pdf.js");
+    const pdfjsLib = ((mod as { default?: unknown }).default ?? mod) as unknown as PdfJsLib;
 
-    // Run PDF.js in fake-worker (main-thread) mode to comply with Obsidian security policy
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "";
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
-
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
     const loadingTask = pdfjsLib.getDocument({
       data: new Uint8Array(arrayBuffer),
       useWorkerFetch: false,
@@ -108,20 +136,14 @@ export class FileProcessor {
       useSystemFonts: true,
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const pdf = await loadingTask.promise;
     const pageTexts: string[] = [];
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     for (let i = 1; i <= pdf.numPages; i++) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
       const page = await pdf.getPage(i);
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
       const content = await page.getTextContent();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-      const pageText = (content.items as any[])
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access
-        .map((item) => item.str ?? "")
+      const pageText = content.items
+        .map((item) => (item as PdfTextItem).str ?? "")
         .join(" ");
       pageTexts.push(pageText);
     }

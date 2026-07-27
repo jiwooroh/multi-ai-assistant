@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, Notice } from "obsidian";
+import { App, DropdownComponent, Notice, Platform, PluginSettingTab, Setting } from "obsidian";
 import type MultiAIAssistantPlugin from "../main";
 import { CHARACTERS } from "./characters";
 
@@ -12,6 +12,8 @@ export interface MultiAIAssistantSettings {
   systemPrompt: string;
   assistantName: string;
   assistantPhotoFilename: string; // filename inside plugin dir, e.g. "assistant-photo.png"
+  geminiCliPath: string;
+  claudeCliPath: string;
   quizCount: number;
   quizDifficulty: string;
   quizType: "mcq" | "short" | "subjective";
@@ -42,6 +44,8 @@ When they ask a question:
 Always prioritize the user's notes, but supplement with current web information when needed.`,
   assistantName: "Neo",
   assistantPhotoFilename: "sprite-pixel.png",
+  geminiCliPath: "gemini",
+  claudeCliPath: "claude",
   quizCount: 5,
   quizDifficulty: "medium",
   quizType: "short",
@@ -62,7 +66,7 @@ export const MODELS: Record<AIProvider, { value: string; label: string }[]> = {
     { value: "gemini-2.0-flash",  label: "Gemini 2.0 Flash" },
     { value: "gemini-1.5-flash",  label: "Gemini 1.5 Flash" },
     { value: "gemini-1.5-pro",    label: "Gemini 1.5 Pro" },
-    { value: "notebooklm",        label: "NotebookLM (Source-Grounded)" },
+    { value: "notebooklm",        label: "NotebookLM (source-grounded)" },
   ],
   openai: [
     { value: "gpt-4o-mini", label: "GPT-4o mini" },
@@ -73,7 +77,7 @@ export const MODELS: Record<AIProvider, { value: string; label: string }[]> = {
     { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
     { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
     { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
-    { value: "notebooklm", label: "NotebookLM (Source-Grounded)" },
+    { value: "notebooklm", label: "NotebookLM (source-grounded)" },
   ],
   claude: [
     { value: "claude-opus-4-6",    label: "Claude Opus 4.6" },
@@ -90,7 +94,7 @@ export const MODELS: Record<AIProvider, { value: string; label: string }[]> = {
   ],
 };
 
-const FREE_KEY_URLS: Record<AIProvider, string> = {
+const KEY_URLS: Record<AIProvider, string> = {
   groq:   "https://console.groq.com/keys",
   gemini: "https://aistudio.google.com/apikey",
   openai: "https://platform.openai.com/api-keys",
@@ -99,20 +103,41 @@ const FREE_KEY_URLS: Record<AIProvider, string> = {
   "claude-cli": "https://console.anthropic.com/settings/keys",
 };
 
-const FREE_NOTICES: Record<AIProvider, string> = {
-  groq:   "🆓 100% free — no credit card needed. Sign up at console.groq.com, grab an API key, done.",
-  gemini: "⚠️ Free in some regions, but may require billing. If you hit payment errors, switch to Groq.",
-  openai: "💳 Requires a paid OpenAI account.",
-  "gemini-cli": "💻 Uses the locally installed gemini CLI tool. Supports live web search!",
-  claude: "💳 Requires an Anthropic account. Get your API key at console.anthropic.com.",
-  "claude-cli": "💻 Uses the locally installed claude CLI. No API key needed — uses your existing CLI login.",
+/** A notice line, split into segments so it can be built with DOM calls instead of HTML. */
+type NoticeSegment = { text: string; emphasis?: "strong" | "code" };
+
+const PROVIDER_NOTICES: Record<AIProvider, NoticeSegment[]> = {
+  groq: [
+    { text: "🆓 " },
+    { text: "100% free", emphasis: "strong" },
+    { text: " — no credit card needed. Sign up, grab an API key, done." },
+  ],
+  gemini: [
+    { text: "⚠️ Free in some regions, but " },
+    { text: "may require billing", emphasis: "strong" },
+    { text: ". If you hit payment errors, switch to Groq." },
+  ],
+  openai: [{ text: "💳 Requires a paid OpenAI account." }],
+  "gemini-cli": [
+    { text: "💻 Uses the locally installed " },
+    { text: "gemini", emphasis: "code" },
+    { text: " CLI. Supports " },
+    { text: "live web search", emphasis: "strong" },
+    { text: "! Desktop only." },
+  ],
+  claude: [{ text: "💳 Requires an Anthropic account with API credit." }],
+  "claude-cli": [
+    { text: "💻 Uses the locally installed " },
+    { text: "claude", emphasis: "code" },
+    { text: " CLI. No API key needed — it reuses your existing CLI login. Desktop only." },
+  ],
 };
+
+const CLI_PROVIDERS: AIProvider[] = ["gemini-cli", "claude-cli"];
 
 export class MultiAIAssistantSettingsTab extends PluginSettingTab {
   plugin: MultiAIAssistantPlugin;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private modelDropdown: any;
-  private noticeEl: HTMLElement;
+  private modelDropdown: DropdownComponent | null = null;
 
   constructor(app: App, plugin: MultiAIAssistantPlugin) {
     super(app, plugin);
@@ -120,71 +145,50 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
   }
 
   display(): void {
+    this.render();
+  }
+
+  /**
+   * Builds the whole settings pane. Kept separate from `display()` so internal
+   * re-renders (provider switch, character pick) do not call the deprecated hook.
+   */
+  private render(): void {
     const { containerEl } = this;
     containerEl.empty();
-    
-    new Setting(containerEl).setName("Multi-AI Assistant Settings").setHeading();
 
-    // ── Notice banner ─────────────────────────────────────────
-    this.noticeEl = containerEl.createDiv("ra-settings-notice");
-    this.updateNotice();
+    this.buildProviderSection(containerEl);
+    this.buildApiKeySection(containerEl);
+    this.buildAssistantSection(containerEl);
+    this.buildQuizSection(containerEl);
+    this.buildFlashcardSection(containerEl);
+  }
 
-    // ── Provider ──────────────────────────────────────────────
+  // ── Provider ────────────────────────────────────────────────
+
+  private buildProviderSection(containerEl: HTMLElement) {
+    const noticeEl = containerEl.createDiv("ra-settings-notice");
+    this.renderNotice(noticeEl);
+
     new Setting(containerEl)
-      .setName("AI Provider")
+      .setName("AI provider")
       .setDesc("Select the AI engine.")
       .addDropdown((drop) => {
         drop
-          .addOption("groq",   "Groq")
+          .addOption("groq", "Groq")
           .addOption("gemini", "Gemini")
           .addOption("gemini-cli", "Gemini CLI")
           .addOption("openai", "OpenAI")
           .addOption("claude", "Claude (Anthropic)")
           .addOption("claude-cli", "Claude CLI")
           .setValue(this.plugin.settings.provider)
-          .onChange(async (value: AIProvider) => {
-            this.plugin.settings.provider = value;
-            this.plugin.settings.model = MODELS[value][0].value;
+          .onChange(async (value) => {
+            this.plugin.settings.provider = value as AIProvider;
+            this.plugin.settings.model = MODELS[value as AIProvider][0].value;
             await this.plugin.saveSettings();
-            this.display(); // Re-render to update API key field and other descriptions
+            this.render(); // re-render so the notice and model list follow the provider
           });
       });
 
-    // ── API Keys ──────────────────────────────────────────────
-    new Setting(containerEl).setName("API Keys").setHeading();
-
-    const keyProviders: { value: AIProvider; label: string }[] = [
-      { value: "groq", label: "Groq" },
-      { value: "gemini", label: "Gemini" },
-      { value: "claude", label: "Claude" },
-      { value: "openai", label: "OpenAI" },
-    ];
-
-    keyProviders.forEach((p) => {
-      new Setting(containerEl)
-        .setName(`${p.label} API Key`)
-        .setDesc(`Get your key at ${FREE_KEY_URLS[p.value]}`)
-        .addText((text) =>
-          text
-            .setPlaceholder(`${p.label} API Key`)
-            .setValue(this.plugin.settings.apiKeys[p.value] || "")
-            .onChange(async (value) => {
-              this.plugin.settings.apiKeys[p.value] = value.trim();
-              await this.plugin.saveSettings();
-            })
-        );
-    });
-
-    // CLI Info (No keys needed)
-    const cliInfo = containerEl.createDiv("ra-settings-notice");
-    cliInfo.setCssStyles({ marginTop: "10px" });
-    
-    cliInfo.empty();
-    cliInfo.createSpan({ text: "💡 " });
-    cliInfo.createEl("strong", { text: "CLI Providers:" });
-    cliInfo.createSpan({ text: " Gemini CLI and Claude CLI use your local terminal login and do not require API keys here." });
-
-    // ── Model ─────────────────────────────────────────────────
     new Setting(containerEl)
       .setName("Model")
       .addDropdown((drop) => {
@@ -196,10 +200,9 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
         });
       });
 
-    // ── Max notes ─────────────────────────────────────────────
     new Setting(containerEl)
-      .setName("Max notes")
-      .setDesc("Context limit.")
+      .setName("Max notes to index")
+      .setDesc("Upper bound on how many vault notes are pulled into context.")
       .addSlider((slider) =>
         slider
           .setLimits(10, 500, 10)
@@ -209,69 +212,124 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
+  }
 
-    // ── Character picker ──────────────────────────────────────
-    new Setting(containerEl).setName("Assistant Character").setHeading();
+  private renderNotice(noticeEl: HTMLElement) {
+    const provider = this.plugin.settings.provider;
+    noticeEl.empty();
+
+    for (const segment of PROVIDER_NOTICES[provider]) {
+      if (segment.emphasis === "strong") noticeEl.createEl("strong", { text: segment.text });
+      else if (segment.emphasis === "code") noticeEl.createEl("code", { text: segment.text });
+      else noticeEl.appendText(segment.text);
+    }
+
+    if (!CLI_PROVIDERS.includes(provider)) {
+      noticeEl.appendText(" Get your key at ");
+      noticeEl.createEl("a", { text: KEY_URLS[provider], href: KEY_URLS[provider] });
+    }
+  }
+
+  // ── API keys ────────────────────────────────────────────────
+
+  private buildApiKeySection(containerEl: HTMLElement) {
+    new Setting(containerEl).setName("API keys").setHeading();
+
+    const keyProviders: { value: AIProvider; label: string }[] = [
+      { value: "groq", label: "Groq" },
+      { value: "gemini", label: "Gemini" },
+      { value: "claude", label: "Claude" },
+      { value: "openai", label: "OpenAI" },
+    ];
+
+    for (const p of keyProviders) {
+      new Setting(containerEl)
+        .setName(`${p.label} API key`)
+        .setDesc(`Get your key at ${KEY_URLS[p.value]}`)
+        .addText((text) =>
+          text
+            .setPlaceholder(`${p.label} API key`)
+            .setValue(this.plugin.settings.apiKeys[p.value] || "")
+            .onChange(async (value) => {
+              this.plugin.settings.apiKeys[p.value] = value.trim();
+              await this.plugin.saveSettings();
+            })
+        );
+    }
+
+    if (!Platform.isDesktop) return;
+
+    new Setting(containerEl).setName("Local CLI providers").setHeading();
+
+    const cliInfo = containerEl.createDiv("ra-settings-notice ra-settings-notice--spaced");
+    cliInfo.appendText("💡 The Gemini CLI and Claude CLI providers run a command on your computer and reuse its existing login, so no API key is needed. They are desktop only.");
+
+    new Setting(containerEl)
+      .setName("Gemini CLI command")
+      .setDesc("Command or absolute path used to launch the Gemini CLI.")
+      .addText((text) =>
+        text
+          .setPlaceholder("gemini")
+          .setValue(this.plugin.settings.geminiCliPath)
+          .onChange(async (value) => {
+            this.plugin.settings.geminiCliPath = value.trim() || "gemini";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Claude CLI command")
+      .setDesc("Command or absolute path used to launch the Claude CLI.")
+      .addText((text) =>
+        text
+          .setPlaceholder("claude")
+          .setValue(this.plugin.settings.claudeCliPath)
+          .onChange(async (value) => {
+            this.plugin.settings.claudeCliPath = value.trim() || "claude";
+            await this.plugin.saveSettings();
+          })
+      );
+  }
+
+  // ── Assistant ───────────────────────────────────────────────
+
+  private buildAssistantSection(containerEl: HTMLElement) {
+    new Setting(containerEl).setName("Assistant character").setHeading();
 
     const pickerGrid = containerEl.createDiv("ra-char-picker");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pluginDir = (this.plugin.manifest as any).dir as string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const adapter = this.app.vault.adapter as any;
+    const pluginDir = this.plugin.manifest.dir ?? "";
+    const adapter = this.app.vault.adapter;
 
     for (const char of CHARACTERS) {
       const isSelected = this.plugin.settings.assistantPhotoFilename === char.spriteFile;
       const cell = pickerGrid.createDiv("ra-char-cell" + (isSelected ? " ra-char-cell--selected" : ""));
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-      const src = (adapter && typeof adapter.getResourcePath === "function")
-        ? adapter.getResourcePath(`${pluginDir}/${char.spriteFile}`)
-        : "";
-      const img = cell.createEl("img", { cls: "ra-char-img" }) as HTMLImageElement;
-      img.src = src;
-
-      cell.createEl("div", { text: char.fullLabel, cls: "ra-char-label" });
-      cell.createEl("div", { text: char.personality, cls: "ra-char-personality" });
-
-      cell.addEventListener("click", async () => {
-        this.plugin.settings.assistantPhotoFilename = char.spriteFile;
-        this.plugin.settings.assistantName = char.name;
-        await this.plugin.saveSettings();
-        this.display();
+      cell.createEl("img", {
+        cls: "ra-char-img",
+        attr: { src: adapter.getResourcePath(`${pluginDir}/${char.spriteFile}`), alt: char.name },
       });
+      cell.createDiv({ text: char.fullLabel, cls: "ra-char-label" });
+      cell.createDiv({ text: char.personality, cls: "ra-char-personality" });
+
+      cell.addEventListener("click", () => void this.selectCharacter(char.spriteFile, char.name));
     }
 
-    // ── Custom upload ─────────────────────────────────────────
     new Setting(containerEl)
       .setName("Custom photo")
-      .setDesc("Or upload your own (PNG, JPG, GIF).")
+      .setDesc("Or upload your own (PNG, JPG, GIF, WebP).")
       .addButton((btn) => {
         btn.setButtonText("Upload photo").onClick(() => {
-          const doc = activeDocument || document;
-          const input = doc.createEl("input");
-          input.type = "file";
-          input.accept = "image/png,image/jpeg,image/gif,image/webp";
-          input.onchange = async () => {
+          const input = createEl("input", {
+            attr: { type: "file", accept: "image/png,image/jpeg,image/gif,image/webp" },
+          });
+          input.addEventListener("change", () => {
             const file = input.files?.[0];
-            if (!file) return;
-            try {
-              const ext = file.name.split(".").pop() ?? "jpg";
-              const filename = `assistant-photo.${ext}`;
-              const buffer = await file.arrayBuffer();
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-              await adapter.writeBinary(`${pluginDir}/${filename}`, buffer);
-              this.plugin.settings.assistantPhotoFilename = filename;
-              await this.plugin.saveSettings();
-              new Notice(`Photo saved! Reload the plugin to see it.`);
-            } catch (e) {
-              new Notice("Failed to save photo: " + (e as Error).message);
-            }
-          };
+            if (file) void this.saveCustomPhoto(file, pluginDir);
+          });
           input.click();
         });
       });
 
-    // ── Assistant name ────────────────────────────────────────
     new Setting(containerEl)
       .setName("Assistant name")
       .setDesc("Customize the name shown in the sidebar.")
@@ -285,7 +343,6 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
           })
       );
 
-    // ── System prompt ─────────────────────────────────────────
     new Setting(containerEl)
       .setName("System prompt")
       .setDesc("How your assistant should behave and respond. Mentioning search tools encourages live data fetching.")
@@ -298,13 +355,39 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
         text.inputEl.rows = 8;
-        text.inputEl.setCssStyles({ width: "100%" });
+        text.inputEl.addClass("ra-settings-textarea");
       });
+  }
 
-    // ── Quiz Settings ─────────────────────────────────────────
+  private async selectCharacter(spriteFile: string, name: string) {
+    this.plugin.settings.assistantPhotoFilename = spriteFile;
+    this.plugin.settings.assistantName = name;
+    await this.plugin.saveSettings();
+    this.render();
+  }
+
+  private async saveCustomPhoto(file: File, pluginDir: string) {
+    try {
+      const ext = file.name.split(".").pop() ?? "jpg";
+      const filename = `assistant-photo.${ext}`;
+      const buffer = await file.arrayBuffer();
+      await this.app.vault.adapter.writeBinary(`${pluginDir}/${filename}`, buffer);
+      this.plugin.settings.assistantPhotoFilename = filename;
+      await this.plugin.saveSettings();
+      new Notice("Photo saved. Reload the plugin to see it.");
+    } catch (e) {
+      new Notice("Failed to save photo: " + (e as Error).message);
+    }
+  }
+
+  // ── Quiz ────────────────────────────────────────────────────
+
+  private buildQuizSection(containerEl: HTMLElement) {
+    new Setting(containerEl).setName("Quiz").setHeading();
+
     new Setting(containerEl)
-      .setName("Quiz Question Count")
-      .setDesc("How many questions per quiz?")
+      .setName("Question count")
+      .setDesc("How many questions per quiz.")
       .addSlider((slider) =>
         slider
           .setLimits(1, 20, 1)
@@ -319,9 +402,9 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
       .setName("Difficulty")
       .addDropdown((drop) => {
         drop
-          .addOption("easy", "Easy (Simple recall)")
-          .addOption("medium", "Medium (Analysis)")
-          .addOption("hard", "Hard (Synthesis & Application)")
+          .addOption("easy", "Easy (simple recall)")
+          .addOption("medium", "Medium (analysis)")
+          .addOption("hard", "Hard (synthesis and application)")
           .setValue(this.plugin.settings.quizDifficulty)
           .onChange(async (value) => {
             this.plugin.settings.quizDifficulty = value;
@@ -330,37 +413,42 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Quiz Type")
+      .setName("Question type")
       .addDropdown((drop) => {
         drop
-          .addOption("mcq", "Multiple Choice (MCQ)")
-          .addOption("short", "Short Answer")
-          .addOption("subjective", "Subjective / Essay")
+          .addOption("mcq", "Multiple choice")
+          .addOption("short", "Short answer")
+          .addOption("subjective", "Subjective / essay")
           .setValue(this.plugin.settings.quizType || "short")
-          .onChange(async (value: "mcq" | "short" | "subjective") => {
-            this.plugin.settings.quizType = value;
+          .onChange(async (value) => {
+            this.plugin.settings.quizType = value as MultiAIAssistantSettings["quizType"];
             await this.plugin.saveSettings();
           });
       });
 
     new Setting(containerEl)
-      .setName("Quiz Language")
+      .setName("Language")
       .addDropdown((drop) => {
         drop
-          .addOption("both", "English & Korean")
-          .addOption("english", "English Only")
-          .addOption("korean", "Korean Only")
+          .addOption("both", "English and Korean")
+          .addOption("english", "English only")
+          .addOption("korean", "Korean only")
           .setValue(this.plugin.settings.quizLanguage || "both")
-          .onChange(async (value: "english" | "korean" | "both") => {
-            this.plugin.settings.quizLanguage = value;
+          .onChange(async (value) => {
+            this.plugin.settings.quizLanguage = value as MultiAIAssistantSettings["quizLanguage"];
             await this.plugin.saveSettings();
           });
       });
+  }
 
-    // ── Flashcard Settings ────────────────────────────────────
+  // ── Flashcards ──────────────────────────────────────────────
+
+  private buildFlashcardSection(containerEl: HTMLElement) {
+    new Setting(containerEl).setName("Flashcards").setHeading();
+
     new Setting(containerEl)
-      .setName("Flashcard Count")
-      .setDesc("How many cards to generate?")
+      .setName("Card count")
+      .setDesc("How many cards to generate.")
       .addSlider((slider) =>
         slider
           .setLimits(1, 30, 1)
@@ -372,12 +460,12 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Flashcard Difficulty")
+      .setName("Difficulty")
       .addDropdown((drop) => {
         drop
-          .addOption("easy", "Easy (Terms)")
-          .addOption("medium", "Medium (Concepts)")
-          .addOption("hard", "Hard (Detailed Theories)")
+          .addOption("easy", "Easy (terms)")
+          .addOption("medium", "Medium (concepts)")
+          .addOption("hard", "Hard (detailed theories)")
           .setValue(this.plugin.settings.flashcardDifficulty)
           .onChange(async (value) => {
             this.plugin.settings.flashcardDifficulty = value;
@@ -386,43 +474,27 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Flashcard Language")
+      .setName("Language")
       .addDropdown((drop) => {
         drop
-          .addOption("both", "English & Korean")
-          .addOption("english", "English Only")
-          .addOption("korean", "Korean Only")
+          .addOption("both", "English and Korean")
+          .addOption("english", "English only")
+          .addOption("korean", "Korean only")
           .setValue(this.plugin.settings.flashcardLanguage || "both")
-          .onChange(async (value: "english" | "korean" | "both") => {
-            this.plugin.settings.flashcardLanguage = value;
+          .onChange(async (value) => {
+            this.plugin.settings.flashcardLanguage = value as MultiAIAssistantSettings["flashcardLanguage"];
             await this.plugin.saveSettings();
           });
       });
   }
 
-  private updateNotice() {
-    this.noticeEl.empty();
-    const provider = this.plugin.settings.provider;
-    this.noticeEl.createSpan({ text: FREE_NOTICES[provider] });
-
-    if (provider !== "gemini-cli" && provider !== "claude-cli") {
-      const url = FREE_KEY_URLS[provider];
-      if (url) {
-        this.noticeEl.createSpan({ text: " Get your key at " });
-        this.noticeEl.createEl("a", { text: url, href: url });
-      }
-    }
-  }
-
   private updateModelDropdown() {
-    if (!this.modelDropdown) return;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    this.modelDropdown.selectEl.empty();
-    MODELS[this.plugin.settings.provider].forEach(({ value, label }) => {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-      this.modelDropdown.addOption(value, label);
-    });
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-    this.modelDropdown.setValue(this.plugin.settings.model);
+    const drop = this.modelDropdown;
+    if (!drop) return;
+    drop.selectEl.empty();
+    for (const { value, label } of MODELS[this.plugin.settings.provider]) {
+      drop.addOption(value, label);
+    }
+    drop.setValue(this.plugin.settings.model);
   }
 }

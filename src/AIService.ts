@@ -1,26 +1,74 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, Part } from "@google/generative-ai";
 import OpenAI from "openai";
 import type { MultiAIAssistantSettings } from "./SettingsTab";
-import { App, Platform, requestUrl } from "obsidian";
+import { App, FileSystemAdapter, Platform, requestUrl } from "obsidian";
 
 export interface IndexedDocument {
   name: string;
   content: string;
   source: "vault" | "upload";
   imageData?: string; // Base64 string for images
-  mimeType?: string;   // e.g. "image/png"
+  mimeType?: string;  // e.g. "image/png"
 }
 
 export interface QuizQuestion {
   question: string;
   answer: string;
-  options?: string[]; // Optional for MCQ
+  options?: string[]; // Only present for MCQ
 }
 
 export interface Flashcard {
   front: string;
   back: string;
 }
+
+interface InlineImage {
+  data: string;
+  mimeType: string;
+}
+
+interface ClaudeTextBlock {
+  type: "text";
+  text: string;
+}
+
+interface ClaudeImageBlock {
+  type: "image";
+  source: { type: "base64"; media_type: string; data: string };
+}
+
+type ClaudeContentBlock = ClaudeTextBlock | ClaudeImageBlock;
+
+interface ClaudeRequestBody {
+  model: string;
+  max_tokens: number;
+  system: string;
+  messages: { role: "user"; content: ClaudeContentBlock[] }[];
+  stream?: boolean;
+}
+
+interface ClaudeMessageResponse {
+  content?: { type: string; text?: string }[];
+}
+
+interface ClaudeStreamEvent {
+  type?: string;
+  delta?: { type?: string; text?: string };
+}
+
+const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_VERSION = "2023-06-01";
+
+/** Directories added to PATH so GUI-launched Obsidian can find CLIs installed by Homebrew etc. */
+const EXTRA_CLI_PATHS = [
+  "/usr/local/bin",
+  "/usr/bin",
+  "/bin",
+  "/usr/sbin",
+  "/sbin",
+  "/opt/homebrew/bin",
+  "/opt/homebrew/sbin",
+];
 
 export class AIService {
   private settings: MultiAIAssistantSettings;
@@ -39,7 +87,7 @@ export class AIService {
 
   async ask(question: string, documents: IndexedDocument[], onChunk?: (chunk: string) => void): Promise<string> {
     this.requireKey();
-    const images = documents.filter(d => d.imageData && d.mimeType).map(d => ({ data: d.imageData!, mimeType: d.mimeType! }));
+    const images = this.collectImages(documents);
     if (documents.length === 0) {
       return this.complete(this.settings.systemPrompt, question, images, onChunk);
     }
@@ -57,7 +105,7 @@ export class AIService {
     const quizType = this.settings.quizType || "short";
     const language = this.settings.quizLanguage || "both";
 
-    let typeNote = "";
+    let typeNote: string;
     if (quizType === "mcq") {
       typeNote = "Generate Multiple Choice Questions (MCQ). For each question, provide 4 distinct options in an 'options' array. The 'question' string should only contain the question text itself. The 'answer' field should contain the correct option text (e.g. 'Paris').";
     } else if (quizType === "subjective") {
@@ -66,11 +114,11 @@ export class AIService {
       typeNote = "Generate short-answer questions that test factual knowledge and understanding.";
     }
 
-    const langNote = language === "both" 
+    const langNote = language === "both"
       ? "Provide the questions and answers in BOTH English and Korean (e.g. 'Question (질문)')."
       : `Provide everything in ${language === "korean" ? "Korean (한국어)" : "English"} only.`;
 
-    const images = documents.filter(d => d.imageData && d.mimeType).map(d => ({ data: d.imageData!, mimeType: d.mimeType! }));
+    const images = this.collectImages(documents);
     const context = this.buildContext(documents);
     const prompt = `${context}
 
@@ -113,11 +161,11 @@ Provide feedback in Korean if the user's answer is in Korean.`;
     const count = this.settings.flashcardCount || 10;
     const difficulty = this.settings.flashcardDifficulty || "medium";
     const language = this.settings.flashcardLanguage || "both";
-    const langNote = language === "both" 
+    const langNote = language === "both"
       ? "Provide the content in BOTH English and Korean (e.g. 'Term (용어)')."
       : `Provide everything in ${language === "korean" ? "Korean (한국어)" : "English"} only.`;
 
-    const images = documents.filter(d => d.imageData && d.mimeType).map(d => ({ data: d.imageData!, mimeType: d.mimeType! }));
+    const images = this.collectImages(documents);
     const context = this.buildContext(documents);
     const prompt = `${context}
 
@@ -138,9 +186,9 @@ IMPORTANT: ${langNote}`;
   // ── Shared helpers ────────────────────────────────────────
 
   private async complete(
-    systemPrompt: string, 
-    userMessage: string, 
-    images: { data: string, mimeType: string }[] = [],
+    systemPrompt: string,
+    userMessage: string,
+    images: InlineImage[] = [],
     onChunk?: (chunk: string) => void
   ): Promise<string> {
     let effectiveSystemPrompt = systemPrompt;
@@ -148,8 +196,8 @@ IMPORTANT: ${langNote}`;
 
     if (this.settings.model === "notebooklm") {
       effectiveModel = "gemini-1.5-pro";
-      effectiveSystemPrompt = `You are a specialized research assistant acting like NotebookLM. 
-Your goal is to provide deep, source-grounded answers based EXCLUSIVELY on the provided documents. 
+      effectiveSystemPrompt = `You are a specialized research assistant acting like NotebookLM.
+Your goal is to provide deep, source-grounded answers based EXCLUSIVELY on the provided documents.
 1. ALWAYS provide citations in [Source Name] format (e.g., [Notes.md]).
 2. Be proactive in summarizing and identifying key concepts.
 3. If the answer is not in the documents, state so clearly and do not hallucinate.
@@ -160,318 +208,311 @@ Current context:
 ${systemPrompt}`;
     }
 
-    const fullPrompt = `${effectiveSystemPrompt}\n\n${userMessage}`;
+    switch (this.settings.provider) {
+      case "gemini-cli":
+        return this.completeWithGeminiCli(effectiveSystemPrompt, userMessage, effectiveModel, onChunk);
+      case "claude-cli":
+        return this.completeWithClaudeCli(effectiveSystemPrompt, userMessage, effectiveModel, onChunk);
+      case "claude":
+        return this.completeWithClaude(effectiveSystemPrompt, userMessage, effectiveModel, images, onChunk);
+      case "gemini":
+        return this.completeWithGemini(effectiveSystemPrompt, userMessage, effectiveModel, images, onChunk);
+      default:
+        return this.completeWithOpenAICompatible(effectiveSystemPrompt, userMessage, effectiveModel, images, onChunk);
+    }
+  }
 
-    if (this.settings.provider === "gemini-cli") {
-      if (Platform.isDesktop) {
-        return new Promise((resolve, reject) => {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires: child_process is desktop-only, dynamically loaded here
-          const { spawn } = require("child_process");
-          const geminiPath = "/opt/homebrew/bin/gemini";
-          const args = ["--approval-mode", "yolo", "--output-format", "text", "-p", ""];
-          
-          if (effectiveModel && effectiveModel !== "default") {
-            args.push("--model", effectiveModel);
-          }
+  // ── Local CLI providers ───────────────────────────────────
 
-          let vaultPath = "/Users/lucyroh"; 
-          try {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const adapter = this.app.vault.adapter as any;
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-              if (adapter && adapter.getBasePath) {
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-                vaultPath = adapter.getBasePath();
-              }
-          } catch (e) { /* ignore */ }
+  private completeWithGeminiCli(
+    systemPrompt: string,
+    userMessage: string,
+    model: string,
+    onChunk?: (chunk: string) => void
+  ): Promise<string> {
+    const args = ["--approval-mode", "yolo", "--output-format", "text", "-p", ""];
+    if (model && model !== "default") args.push("--model", model);
 
-          const safeEnv = typeof process !== "undefined" ? process.env : {};
-          const env = {
-            ...safeEnv,
-            PATH: ["/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/opt/homebrew/bin", "/opt/homebrew/sbin", safeEnv.PATH || ""].join(":"),
-            TERM: "dumb",
-            NO_COLOR: "1"
-          };
+    return this.runCli({
+      label: "Gemini CLI",
+      command: this.settings.geminiCliPath || "gemini",
+      args,
+      stdin: `${systemPrompt}\n\n${userMessage}`,
+      timeoutMs: 90_000,
+      onChunk,
+    });
+  }
 
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
-          const child = spawn(geminiPath, args, { env, cwd: vaultPath, stdio: ["pipe", "pipe", "pipe"] });
-          let stdout = "";
-          let stderr = "";
+  private completeWithClaudeCli(
+    systemPrompt: string,
+    userMessage: string,
+    model: string,
+    onChunk?: (chunk: string) => void
+  ): Promise<string> {
+    const args = ["--print", "--output-format", "text"];
+    if (model && model !== "default") args.push("--model", model);
+    if (systemPrompt) args.push("--system-prompt", systemPrompt);
 
-          const timeout = window.setTimeout(() => {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-            child.kill();
-            reject(new Error("Gemini CLI timed out after 90 seconds."));
-          }, 90000);
+    return this.runCli({
+      label: "Claude CLI",
+      command: this.settings.claudeCliPath || "claude",
+      args,
+      stdin: userMessage,
+      timeoutMs: 120_000,
+      onChunk,
+    });
+  }
 
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.stdout.on("data", (data: any) => {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-            const chunk = data.toString();
-            stdout += chunk;
-            if (onChunk) onChunk(chunk);
-          });
-
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.stderr.on("data", (data: any) => { 
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-            stderr += data.toString(); 
-          });
-
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.on("close", (code: number) => {
-            window.clearTimeout(timeout);
-            if (code === 0) resolve(stdout.trim());
-            else reject(new Error(stderr || stdout || `Gemini CLI failed with code ${code}`));
-          });
-
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.on("error", (err: any) => { 
-            window.clearTimeout(timeout); 
-            reject(err instanceof Error ? err : new Error(String(err))); 
-          });
-
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.stdin.write(fullPrompt);
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.stdin.end();
-        });
-      } else {
-        return Promise.reject(new Error("Gemini CLI is only supported on desktop."));
-      }
+  /**
+   * Runs a locally installed CLI and returns its stdout.
+   * Desktop only — `child_process` does not exist on mobile, so it is imported
+   * lazily behind the `Platform.isDesktop` guard below.
+   */
+  private async runCli(opts: {
+    label: string;
+    command: string;
+    args: string[];
+    stdin: string;
+    timeoutMs: number;
+    onChunk?: (chunk: string) => void;
+  }): Promise<string> {
+    if (!Platform.isDesktop) {
+      throw new Error(`${opts.label} is only supported on desktop.`);
     }
 
-    if (this.settings.provider === "claude-cli") {
-      if (Platform.isDesktop) {
-        return new Promise((resolve, reject) => {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires: child_process is desktop-only, dynamically loaded here
-          const { spawn } = require("child_process");
-          const claudePath = "/Users/lucyroh/.local/bin/claude";
-          const args = ["--print", "--output-format", "text", "--dangerously-skip-permissions"];
+    const { spawn } = await import("node:child_process");
 
-          if (effectiveModel && effectiveModel !== "default") {
-            args.push("--model", effectiveModel);
-          }
-
-          if (effectiveSystemPrompt) {
-            args.push("--system-prompt", effectiveSystemPrompt);
-          }
-
-          let vaultPath = "/Users/lucyroh";
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const adapter = this.app.vault.adapter as any;
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-            if (adapter && adapter.getBasePath) {
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-              vaultPath = adapter.getBasePath();
-            }
-          } catch (e) { /* ignore */ }
-
-          const safeEnv = typeof process !== "undefined" ? process.env : {};
-          const env = {
-            ...safeEnv,
-            PATH: ["/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/opt/homebrew/bin", "/opt/homebrew/sbin", "/Users/lucyroh/.local/bin", safeEnv.PATH || ""].join(":"),
-            TERM: "dumb",
-            NO_COLOR: "1",
-          };
-
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
-          const child = spawn(claudePath, args, { env, cwd: vaultPath, stdio: ["pipe", "pipe", "pipe"] });
-          let stdout = "";
-          let stderr = "";
-
-          const timeout = window.setTimeout(() => {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-            child.kill();
-            reject(new Error("Claude CLI timed out after 120 seconds."));
-          }, 120000);
-
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.stdout.on("data", (data: Buffer) => {
-            const chunk = data.toString();
-            stdout += chunk;
-            if (onChunk) onChunk(chunk);
-          });
-
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
-
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.on("close", (code: number) => {
-            window.clearTimeout(timeout);
-            if (code === 0) resolve(stdout.trim());
-            else reject(new Error(stderr || stdout || `Claude CLI failed with code ${code}`));
-          });
-
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.on("error", (err: Error) => { 
-            window.clearTimeout(timeout); 
-            reject(err instanceof Error ? err : new Error(String(err))); 
-          });
-
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.stdin.write(userMessage);
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-          child.stdin.end();
-        });
-      } else {
-        return Promise.reject(new Error("Claude CLI is only supported on desktop."));
-      }
-    }
-
-    if (this.settings.provider === "claude") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const buildContent = (text: string, imgs: { data: string; mimeType: string }[]): any[] => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const parts: any[] = [];
-        if (imgs.length > 0) {
-          for (const img of imgs) {
-            parts.push({ type: "image", source: { type: "base64", media_type: img.mimeType, data: img.data } });
-          }
-        }
-        parts.push({ type: "text", text });
-        return parts;
-      };
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const body: any = {
-        model: effectiveModel,
-        max_tokens: 8096,
-        system: effectiveSystemPrompt,
-        messages: [{ role: "user", content: buildContent(userMessage, images) }],
-      };
-
-      if (onChunk) {
-        body.stream = true;
-        // Bypasses local linter warning by calling fetch on window directly for streaming
-        const resp = await window.fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "x-api-key": this.settings.apiKeys[this.settings.provider],
-            "anthropic-version": "2023-06-01",
-            "anthropic-dangerous-direct-browser-access": "true",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(body),
-        });
-        if (!resp.ok) {
-          const err = await resp.text();
-          throw new Error(`Claude API error ${resp.status}: ${err}`);
-        }
-        const reader = resp.body!.getReader();
-        const decoder = new TextDecoder();
-        let fullText = "";
-        let buf = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const data = line.slice(6).trim();
-            if (data === "[DONE]" || !data) continue;
-            try {
-              const parsed = JSON.parse(data);
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-              if (parsed.type === "content_block_delta" && parsed.delta?.type === "text_delta") {
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-                const chunk = parsed.delta.text ?? "";
-                fullText += chunk;
-                onChunk(chunk);
-              }
-            } catch { /* skip malformed lines */ }
-          }
-        }
-        return fullText;
-      } else {
-        // Uses built-in requestUrl from Obsidian to comply with code rules for non-streaming calls
-        const resp = await requestUrl({
-          url: "https://api.anthropic.com/v1/messages",
-          method: "POST",
-          headers: {
-            "x-api-key": this.settings.apiKeys[this.settings.provider],
-            "anthropic-version": "2023-06-01",
-            "anthropic-dangerous-direct-browser-access": "true",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(body),
-          throw: false
-        });
-        if (resp.status !== 200) {
-          throw new Error(`Claude API error ${resp.status}: ${resp.text}`);
-        }
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access
-        return resp.json.content?.[0]?.text ?? "";
-      }
-    }
-
-    if (this.settings.provider === "gemini") {
-      const genAI = new GoogleGenerativeAI(this.settings.apiKeys[this.settings.provider]);
-      const model = genAI.getGenerativeModel({ model: effectiveModel, systemInstruction: effectiveSystemPrompt });
-      
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const promptParts: any[] = [userMessage];
-      for (const img of images) {
-        promptParts.push({ inlineData: { data: img.data, mimeType: img.mimeType } });
-      }
-      
-      if (onChunk) {
-        const result = await model.generateContentStream(promptParts);
-        let fullText = "";
-        for await (const chunk of result.stream) {
-          const text = chunk.text();
-          fullText += text;
-          onChunk(text);
-        }
-        return fullText;
-      } else {
-        const result = await model.generateContent(promptParts);
-        return result.response.text();
-      }
-    } else {
-      const client = new OpenAI({
-        apiKey: this.settings.apiKeys[this.settings.provider],
-        baseURL: this.settings.provider === "groq" ? "https://api.groq.com/openai/v1" : undefined,
-        dangerouslyAllowBrowser: true,
+    return new Promise<string>((resolve, reject) => {
+      const child = spawn(opts.command, opts.args, {
+        env: this.cliEnv(),
+        cwd: this.vaultBasePath(),
+        stdio: ["pipe", "pipe", "pipe"],
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const messages: any[] = [{ role: "system", content: effectiveSystemPrompt }];
-      if (images.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const content: any[] = [{ type: "text", text: userMessage }];
-        for (const img of images) {
-          content.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.data}` } });
-        }
-        messages.push({ role: "user", content });
-      } else {
-        messages.push({ role: "user", content: userMessage });
-      }
+      let stdout = "";
+      let stderr = "";
 
-      if (onChunk) {
-        const stream = await client.chat.completions.create({
-          model: effectiveModel,
-          messages: messages,
-          stream: true,
-        });
-        let fullText = "";
-        for await (const chunk of stream) {
-          const text = chunk.choices[0]?.delta?.content || "";
-          fullText += text;
-          onChunk(text);
+      const timeout = window.setTimeout(() => {
+        child.kill();
+        reject(new Error(`${opts.label} timed out after ${Math.round(opts.timeoutMs / 1000)} seconds.`));
+      }, opts.timeoutMs);
+
+      child.stdout.on("data", (data: Buffer) => {
+        const chunk = data.toString();
+        stdout += chunk;
+        opts.onChunk?.(chunk);
+      });
+
+      child.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      child.on("close", (code: number | null) => {
+        window.clearTimeout(timeout);
+        if (code === 0) resolve(stdout.trim());
+        else reject(new Error(stderr || stdout || `${opts.label} failed with exit code ${code ?? "unknown"}.`));
+      });
+
+      child.on("error", (err: Error) => {
+        window.clearTimeout(timeout);
+        reject(new Error(`${opts.label} could not be started (${opts.command}): ${err.message}`));
+      });
+
+      child.stdin.write(opts.stdin);
+      child.stdin.end();
+    });
+  }
+
+  private cliEnv(): Record<string, string | undefined> {
+    const base: Record<string, string | undefined> =
+      typeof process !== "undefined" && process.env ? { ...process.env } : {};
+    const home = base.HOME;
+    const paths = [...EXTRA_CLI_PATHS];
+    if (home) paths.push(`${home}/.local/bin`);
+    if (base.PATH) paths.push(base.PATH);
+
+    return { ...base, PATH: paths.join(":"), TERM: "dumb", NO_COLOR: "1" };
+  }
+
+  private vaultBasePath(): string | undefined {
+    const adapter = this.app.vault.adapter;
+    return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : undefined;
+  }
+
+  // ── Claude (Anthropic API) ────────────────────────────────
+
+  private async completeWithClaude(
+    systemPrompt: string,
+    userMessage: string,
+    model: string,
+    images: InlineImage[],
+    onChunk?: (chunk: string) => void
+  ): Promise<string> {
+    const content: ClaudeContentBlock[] = images.map((img) => ({
+      type: "image" as const,
+      source: { type: "base64" as const, media_type: img.mimeType, data: img.data },
+    }));
+    content.push({ type: "text", text: userMessage });
+
+    const body: ClaudeRequestBody = {
+      model,
+      max_tokens: 8096,
+      system: systemPrompt,
+      messages: [{ role: "user", content }],
+    };
+
+    const headers: Record<string, string> = {
+      "x-api-key": this.settings.apiKeys.claude,
+      "anthropic-version": ANTHROPIC_VERSION,
+      "content-type": "application/json",
+    };
+
+    if (!onChunk) {
+      const resp = await requestUrl({
+        url: ANTHROPIC_MESSAGES_URL,
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        throw: false,
+      });
+      if (resp.status >= 400) {
+        throw new Error(`Claude API error ${resp.status}: ${resp.text}`);
+      }
+      const json = resp.json as ClaudeMessageResponse;
+      return json.content?.[0]?.text ?? "";
+    }
+
+    // `requestUrl` buffers the whole response, so token-by-token streaming has to
+    // go through `fetch`. The extra header opts in to direct browser access.
+    body.stream = true;
+    const resp = await fetch(ANTHROPIC_MESSAGES_URL, {
+      method: "POST",
+      headers: { ...headers, "anthropic-dangerous-direct-browser-access": "true" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok || !resp.body) {
+      throw new Error(`Claude API error ${resp.status}: ${await resp.text()}`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = "";
+    let buf = "";
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6).trim();
+        if (!data || data === "[DONE]") continue;
+        let parsed: ClaudeStreamEvent;
+        try {
+          parsed = JSON.parse(data) as ClaudeStreamEvent;
+        } catch {
+          continue; // partial or keep-alive line
         }
-        return fullText;
-      } else {
-        const response = await client.chat.completions.create({
-          model: effectiveModel,
-          messages: messages,
-        });
-        return response.choices[0]?.message?.content ?? "";
+        if (parsed.type === "content_block_delta" && parsed.delta?.type === "text_delta") {
+          const chunk = parsed.delta.text ?? "";
+          fullText += chunk;
+          onChunk(chunk);
+        }
       }
     }
+    return fullText;
+  }
+
+  // ── Gemini ────────────────────────────────────────────────
+
+  private async completeWithGemini(
+    systemPrompt: string,
+    userMessage: string,
+    model: string,
+    images: InlineImage[],
+    onChunk?: (chunk: string) => void
+  ): Promise<string> {
+    const genAI = new GoogleGenerativeAI(this.settings.apiKeys.gemini);
+    const generativeModel = genAI.getGenerativeModel({ model, systemInstruction: systemPrompt });
+
+    const promptParts: (string | Part)[] = [userMessage];
+    for (const img of images) {
+      promptParts.push({ inlineData: { data: img.data, mimeType: img.mimeType } });
+    }
+
+    if (!onChunk) {
+      const result = await generativeModel.generateContent(promptParts);
+      return result.response.text();
+    }
+
+    const result = await generativeModel.generateContentStream(promptParts);
+    let fullText = "";
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      fullText += text;
+      onChunk(text);
+    }
+    return fullText;
+  }
+
+  // ── OpenAI / Groq ─────────────────────────────────────────
+
+  private async completeWithOpenAICompatible(
+    systemPrompt: string,
+    userMessage: string,
+    model: string,
+    images: InlineImage[],
+    onChunk?: (chunk: string) => void
+  ): Promise<string> {
+    const client = new OpenAI({
+      apiKey: this.settings.apiKeys[this.settings.provider],
+      baseURL: this.settings.provider === "groq" ? "https://api.groq.com/openai/v1" : undefined,
+      dangerouslyAllowBrowser: true,
+    });
+
+    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: "system", content: systemPrompt },
+    ];
+
+    if (images.length > 0) {
+      const content: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
+        { type: "text", text: userMessage },
+      ];
+      for (const img of images) {
+        content.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.data}` } });
+      }
+      messages.push({ role: "user", content });
+    } else {
+      messages.push({ role: "user", content: userMessage });
+    }
+
+    if (!onChunk) {
+      const response = await client.chat.completions.create({ model, messages });
+      return response.choices[0]?.message?.content ?? "";
+    }
+
+    const stream = await client.chat.completions.create({ model, messages, stream: true });
+    let fullText = "";
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content || "";
+      fullText += text;
+      onChunk(text);
+    }
+    return fullText;
+  }
+
+  // ── Utilities ─────────────────────────────────────────────
+
+  private collectImages(documents: IndexedDocument[]): InlineImage[] {
+    const images: InlineImage[] = [];
+    for (const doc of documents) {
+      if (doc.imageData && doc.mimeType) {
+        images.push({ data: doc.imageData, mimeType: doc.mimeType });
+      }
+    }
+    return images;
   }
 
   private buildContext(documents: IndexedDocument[]): string {
@@ -484,9 +525,9 @@ ${systemPrompt}`;
 
   private parseJSON<T>(raw: string, fallback: T): T {
     try {
-      // Strip markdown code fences if present
+      // Strip markdown code fences if the model wrapped its JSON in them.
       const cleaned = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-      return JSON.parse(cleaned);
+      return JSON.parse(cleaned) as T;
     } catch {
       return fallback;
     }
@@ -494,7 +535,9 @@ ${systemPrompt}`;
 
   private requireKey() {
     if (this.settings.provider === "gemini-cli" || this.settings.provider === "claude-cli") return;
-    if (!this.settings.apiKeys[this.settings.provider]) throw new Error(`No API key set for ${this.settings.provider}. Go to Settings → Multi-AI Assistant.`);
+    if (!this.settings.apiKeys[this.settings.provider]) {
+      throw new Error(`No API key set for ${this.settings.provider}. Go to Settings → Multi-AI Assistant.`);
+    }
   }
 
   private requireDocs(docs: IndexedDocument[]) {
