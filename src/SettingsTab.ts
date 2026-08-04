@@ -1,4 +1,4 @@
-import { App, DropdownComponent, Notice, Platform, PluginSettingTab, Setting } from "obsidian";
+import { App, DropdownComponent, Notice, Platform, PluginSettingTab, Setting, normalizePath } from "obsidian";
 import type MultiAIAssistantPlugin from "../main";
 import { CHARACTERS } from "./characters";
 
@@ -297,7 +297,8 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
     new Setting(containerEl).setName("Assistant character").setHeading();
 
     const pickerGrid = containerEl.createDiv("ra-char-picker");
-    const pluginDir = this.plugin.manifest.dir ?? "";
+    const manifestDir = this.plugin.manifest.dir as string;
+    const pluginDir = manifestDir || normalizePath(`${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`);
     const adapter = this.app.vault.adapter;
 
     for (const char of CHARACTERS) {
@@ -306,7 +307,7 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
 
       cell.createEl("img", {
         cls: "ra-char-img",
-        attr: { src: adapter.getResourcePath(`${pluginDir}/${char.spriteFile}`), alt: char.name },
+        attr: { src: adapter.getResourcePath(normalizePath(`${pluginDir}/${char.spriteFile}`)), alt: char.name },
       });
       cell.createDiv({ text: char.fullLabel, cls: "ra-char-label" });
       cell.createDiv({ text: char.personality, cls: "ra-char-personality" });

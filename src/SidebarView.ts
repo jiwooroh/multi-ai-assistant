@@ -8,6 +8,7 @@ import {
   TFolder,
   WorkspaceLeaf,
   setIcon,
+  normalizePath,
 } from "obsidian";
 import type MultiAIAssistantPlugin from "../main";
 import type { IndexedDocument, QuizQuestion, Flashcard } from "./AIService";
@@ -79,8 +80,9 @@ export class SidebarView extends ItemView {
   getIcon() { return "bot"; }
 
   private getSpriteSrc(filename: string): string {
-    const pluginDir = this.plugin.manifest.dir ?? "";
-    return this.app.vault.adapter.getResourcePath(`${pluginDir}/${filename}`);
+    const manifestDir = this.plugin.manifest.dir as string;
+    const pluginDir = manifestDir || normalizePath(`${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`);
+    return this.app.vault.adapter.getResourcePath(normalizePath(`${pluginDir}/${filename}`));
   }
 
   async onOpen() {
