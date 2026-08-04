@@ -1,7 +1,7 @@
 {
   "id": "multi-ai-assistant",
   "name": "Multi-AI Assistant",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "minAppVersion": "1.7.2",
   "description": "Index your notes and uploaded files, then ask Gemini, Groq, OpenAI, or Claude. Supports the Gemini and Claude CLIs.",
   "author": "Lucy Roh",
