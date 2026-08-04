@@ -299,7 +299,6 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
     const pickerGrid = containerEl.createDiv("ra-char-picker");
     const manifestDir = this.plugin.manifest.dir as string;
     const pluginDir = manifestDir || normalizePath(`${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`);
-    const adapter = this.app.vault.adapter;
 
     for (const char of CHARACTERS) {
       const isSelected = this.plugin.settings.assistantPhotoFilename === char.spriteFile;
@@ -307,7 +306,7 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
 
       cell.createEl("img", {
         cls: "ra-char-img",
-        attr: { src: adapter.getResourcePath(normalizePath(`${pluginDir}/${char.spriteFile}`)), alt: char.name },
+        attr: { src: char.base64, alt: char.name },
       });
       cell.createDiv({ text: char.fullLabel, cls: "ra-char-label" });
       cell.createDiv({ text: char.personality, cls: "ra-char-personality" });

@@ -80,6 +80,10 @@ export class SidebarView extends ItemView {
   getIcon() { return "bot"; }
 
   private getSpriteSrc(filename: string): string {
+    const char = CHARACTERS.find((c) => c.spriteFile === filename);
+    if (char && char.base64) {
+      return char.base64;
+    }
     const manifestDir = this.plugin.manifest.dir as string;
     const pluginDir = manifestDir || normalizePath(`${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`);
     return this.app.vault.adapter.getResourcePath(normalizePath(`${pluginDir}/${filename}`));
