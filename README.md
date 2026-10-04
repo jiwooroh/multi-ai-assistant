@@ -41,12 +41,14 @@ An Obsidian sidebar that turns your vault into a study partner. Point it at note
 
 ### From a release
 
-1. Download `main.js`, `manifest.json`, `styles.css`, `pdf.worker.min.js`, and all `sprite-*.png` files from the [latest release](https://github.com/jiwooroh/multi-ai-assistant/releases).
-2. Put them in `<your vault>/.obsidian/plugins/multi-ai-assistant/`.
+1. Download `main.js`, `manifest.json`, `styles.css`, and `pdf.worker.min.js` from the [latest release](https://github.com/jiwooroh/multi-ai-assistant/releases/latest).
+2. Create the folder `<your vault>/.obsidian/plugins/multi-ai-assistant/` and put all four files in it.
 3. Reload Obsidian and enable **Multi-AI Assistant** under Settings → Community plugins.
 
 > [!IMPORTANT]
-> The character sprites and the PDF.js worker are loaded from the plugin folder at runtime, so they have to be shipped alongside `main.js`. See [Known limitations](#known-limitations) — this needs solving before a community-store submission.
+> `pdf.worker.min.js` is loaded from the plugin folder at runtime, so it must sit next to `main.js` — without it, everything works except reading PDFs. See [Known limitations](#known-limitations).
+
+To update, download the same four files from the newer release and replace the old ones.
 
 ### From source
 
@@ -108,13 +110,13 @@ This plugin does more than talk to an HTTP API, and you should know exactly what
 
 **The NotebookLM tab embeds `notebooklm.google.com` in an iframe** on desktop. That is Google's page running inside Obsidian, subject to Google's terms and cookies.
 
-**The bundle reads the filesystem** via the PDF.js and OpenAI libraries, which include Node `fs` code paths for non-browser environments. The plugin's own code only touches the vault through Obsidian's APIs, plus the plugin folder itself for sprites and the PDF worker.
+**The bundle reads the filesystem** via the PDF.js and OpenAI libraries, which include Node `fs` code paths for non-browser environments. The plugin's own code only touches the vault through Obsidian's APIs, plus the plugin folder itself for the PDF worker and any custom assistant photo you upload.
 
 ---
 
 ## Known limitations
 
-- **Asset shipping.** Obsidian's community-plugin installer only fetches `main.js`, `manifest.json`, and `styles.css`. The character sprites and `pdf.worker.min.js` live as separate files, so they need to be inlined into the bundle (sprites as data URIs, worker via a blob URL) before this can be listed in the community store.
+- **Asset shipping.** Obsidian's community-plugin installer only fetches `main.js`, `manifest.json`, and `styles.css`. The character sprites are already inlined as data URIs, but `pdf.worker.min.js` is still a separate file, so it needs to be inlined (e.g. via a blob URL) before this can be listed in the community store.
 - **Streaming uses `fetch`, not `requestUrl`.** Obsidian's `requestUrl` buffers whole responses, so the Claude streaming path uses `fetch` with the direct-browser-access header. Non-streaming requests go through `requestUrl`.
 - **Settings search.** The settings tab uses the classic `display()` API, so its options don't appear in Obsidian 1.13+ settings search. Migrating to `getSettingDefinitions()` is a follow-up.
 - **Model lists are hardcoded** in `src/SettingsTab.ts` and will drift as providers ship new models.
@@ -141,7 +143,7 @@ Two things in the build are worth knowing about:
 
 ### Releasing
 
-Tag and name the GitHub release **exactly** the version in `manifest.json` (e.g. `1.0.0`, no `v` prefix) — Obsidian's release checker matches on this. Attach `main.js`, `manifest.json`, `styles.css`, `pdf.worker.min.js`, and the `sprite-*.png` files.
+Tag and name the GitHub release **exactly** the version in `manifest.json` (e.g. `1.0.0`, no `v` prefix) — Obsidian's release checker matches on this. Attach `main.js`, `manifest.json`, `styles.css`, and `pdf.worker.min.js`.
 
 ---
 
