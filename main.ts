@@ -73,6 +73,7 @@ export default class MultiAIAssistantPlugin extends Plugin {
   }
 
   private handleSelection(evt: MouseEvent) {
+    if (!this.settings.showSelectionButton) return;
     // Use the document the click happened in so the button also works in popout windows.
     const doc = (evt.target as HTMLElement | null)?.ownerDocument ?? document;
     const selectedText = doc.getSelection()?.toString().trim();
@@ -86,6 +87,7 @@ export default class MultiAIAssistantPlugin extends Plugin {
   }
 
   private handleSelectionTouch(pageX: number, pageY: number) {
+    if (!this.settings.showSelectionButton) return;
     const selectedText = document.getSelection()?.toString().trim();
     if (!selectedText) return;
 
@@ -94,8 +96,12 @@ export default class MultiAIAssistantPlugin extends Plugin {
   }
 
   private createFloatingBtn(doc: Document) {
-    const btn = doc.body.createEl("button", { cls: "ra-floating-search-btn" });
-    setIcon(btn, "search");
+    const btn = doc.body.createEl("button", {
+      cls: "ra-floating-search-btn",
+      attr: { "aria-label": "Ask the assistant about the selection" },
+    });
+    setIcon(btn.createSpan("ra-floating-search-icon"), "sparkles");
+    btn.createSpan({ text: "Ask", cls: "ra-floating-search-label" });
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -119,10 +125,10 @@ export default class MultiAIAssistantPlugin extends Plugin {
   private showFloatingBtn(x: number, y: number, text: string) {
     if (!this.floatingBtn) return;
     this.floatingBtnText = text;
-    // Position at the bottom-right of the cursor.
+    // Position just below-right of the cursor.
     this.floatingBtn.setCssProps({
-      "--ra-float-left": `${x + 15}px`,
-      "--ra-float-top": `${y + 15}px`,
+      "--ra-float-left": `${x + 8}px`,
+      "--ra-float-top": `${y + 12}px`,
     });
     this.floatingBtn.addClass("is-visible");
   }
@@ -173,6 +179,7 @@ export default class MultiAIAssistantPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+    if (!this.settings.showSelectionButton) this.hideFloatingBtn();
     this.aiService.updateSettings(this.settings);
   }
 }

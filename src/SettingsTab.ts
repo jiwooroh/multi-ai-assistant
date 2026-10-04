@@ -21,6 +21,7 @@ export interface MultiAIAssistantSettings {
   flashcardCount: number;
   flashcardDifficulty: string;
   flashcardLanguage: "english" | "korean" | "both";
+  showSelectionButton: boolean;
 }
 
 export const DEFAULT_SETTINGS: MultiAIAssistantSettings = {
@@ -53,6 +54,7 @@ Always prioritize the user's notes, but supplement with current web information 
   flashcardCount: 10,
   flashcardDifficulty: "medium",
   flashcardLanguage: "both",
+  showSelectionButton: true,
 };
 
 export const MODELS: Record<AIProvider, { value: string; label: string }[]> = {
@@ -209,6 +211,18 @@ export class MultiAIAssistantSettingsTab extends PluginSettingTab {
           .setValue(this.plugin.settings.maxNotesToIndex)
           .onChange(async (value) => {
             this.plugin.settings.maxNotesToIndex = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Show selection button")
+      .setDesc("Show a floating \"Ask\" button next to text you select, to send it to the assistant.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showSelectionButton)
+          .onChange(async (value) => {
+            this.plugin.settings.showSelectionButton = value;
             await this.plugin.saveSettings();
           })
       );
