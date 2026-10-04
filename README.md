@@ -21,7 +21,7 @@ An Obsidian sidebar that turns your vault into a study partner. Point it at note
 
 **Six providers.** Groq, Gemini, OpenAI, and Claude over their HTTP APIs — plus the `gemini` and `claude` CLIs on desktop, which reuse the login you already have in your terminal and need no API key.
 
-**Ask about a selection.** Highlight text anywhere in Obsidian and a small search button appears; click it to send that text straight to the assistant.
+**Ask about a selection.** Highlight text anywhere in Obsidian and a small **✨ Ask** button appears next to it; click it to send that text straight to the assistant. Don't want it? Turn off **Show selection button** in settings.
 
 **16 characters.** Each has its own sprite, personality blurb, and greeting. Purely cosmetic, entirely the point.
 
@@ -41,7 +41,7 @@ An Obsidian sidebar that turns your vault into a study partner. Point it at note
 
 ### From a release
 
-1. Download `main.js`, `manifest.json`, `styles.css`, `pdf.worker.min.js`, and all `sprite-*.png` files from the [latest release](https://github.com/lucytheboss/multi-ai-assistant/releases).
+1. Download `main.js`, `manifest.json`, `styles.css`, `pdf.worker.min.js`, and all `sprite-*.png` files from the [latest release](https://github.com/jiwooroh/multi-ai-assistant/releases).
 2. Put them in `<your vault>/.obsidian/plugins/multi-ai-assistant/`.
 3. Reload Obsidian and enable **Multi-AI Assistant** under Settings → Community plugins.
 
@@ -51,7 +51,7 @@ An Obsidian sidebar that turns your vault into a study partner. Point it at note
 ### From source
 
 ```bash
-git clone https://github.com/lucytheboss/multi-ai-assistant
+git clone https://github.com/jiwooroh/multi-ai-assistant
 cd multi-ai-assistant
 npm install
 npm run build     # or: npm run dev  (watch mode)
@@ -75,6 +75,8 @@ Open **Settings → Multi-AI Assistant**, pick a provider, and paste a key.
 | **Claude CLI** | Uses your existing CLI login — no key | Install the `claude` CLI |
 
 The two CLI providers are **desktop only** and are hidden from the provider list on mobile. If your CLI isn't on the `PATH` that Obsidian sees, set an absolute path under **Local CLI providers** in settings (e.g. `/opt/homebrew/bin/gemini`).
+
+To hide the floating **Ask** button that appears when you select text, turn off **Show selection button** (it's on by default).
 
 You can also switch provider and model on the fly from the two dropdowns at the top of the knowledge base panel — no need to open settings.
 
