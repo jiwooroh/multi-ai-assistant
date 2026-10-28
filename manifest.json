@@ -4,7 +4,7 @@
   "version": "1.2.0",
   "minAppVersion": "1.7.2",
   "description": "Index your notes and uploaded files, then ask Gemini, Groq, OpenAI, or Claude. Supports the Gemini and Claude CLIs.",
-  "author": "Lucy Roh",
-  "authorUrl": "https://github.com/lucytheboss",
+  "author": "Jiwoo Roh",
+  "authorUrl": "https://github.com/jiwooroh",
   "isDesktopOnly": false
 }
